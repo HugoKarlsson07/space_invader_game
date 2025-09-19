@@ -16,8 +16,13 @@ class Enemy
     @y1 = y
   end
 
-  def update
 
+  def move_down
+    @y1 += 40
+  end
+
+  def update(direction)
+    @x1 += 2 * direction 
   end
 
   def draw
@@ -96,6 +101,7 @@ end
 
 
 class Game < Gosu::Window
+  attr_accessor :x1, :y1 
   def initialize
     super 1600, 1000
     self.caption = "space inavder"
@@ -103,55 +109,42 @@ class Game < Gosu::Window
     @player = Player.new(750,750)
     @player.warp(750,750)
     @bullets = []
-    @scoure = 0
-
+    @score = 0
+    
+    
 
     @enemys = []
-    spawn_enemies
+    @enemy_direction = 1
+    spawn_enmies
     
-    
-  end
-
-  def enemy_movment
-    if x1 == 800
-      x1 = 50
-      y1 += 50
-    end
-  end
-
-  def spawn_enemies_dynamic
-    sum = 5/@level
-    cooldown = 1.3*sum
-
-    @last_click_time ||= Time.now - cooldown
-    if Time.now - @last_click_time >= cooldown
-      @enemys << Enemy.new(x1,y1)
-      @last_click_time = Time.now
-    end
-   
-  end
-
-  def levelels 
-    if  @score > 
   end
 
 
-  def spawn_enemies
-      (13 * @level).times do |i|
-      x1 = 50 + (i % 16) * 100
-      y1 = 50 + (i / 16) * 80
-      @enemys << Enemy.new(x1, y1)
+  def spawn_enmies
+    rows = 5
+    columns = 11
+    x_spacing = 100
+    y_spacing = 70
+    start_x = 100
+    start_y = 50
+
+    rows.times do |row|
+      columns.times do |columns|
+        x = start_x + columns*x_spacing
+        y = start_y + row*y_spacing
+        @enemys << Enemy.new(x, y)
       end
+    end
   end
-
-
+  
   def implode
     @bullets.each do |bullet|
       @enemys.reject! do |enemy|
         dx = bullet.instance_variable_get(:@x2) - enemy.x1
         dy = bullet.instance_variable_get(:@y2) - enemy.y1
-        Math.sqrt(dx*dx + dy*dy) < enemy.instance_variable_get(:@radius) + 3
-        @score += 30
+        hit = Math.sqrt(dx*dx + dy*dy) < enemy.instance_variable_get(:@radius) + 3
+        @score += 30 if hit
+        hit
       end
     end
   end
@@ -177,6 +170,20 @@ class Game < Gosu::Window
       end
     end
     @player.update
+
+
+    @enemys.each { |enemy| enemy.update(@enemy_direction) }
+
+    
+    if @enemys.any? { |e| e.x1 <= 0 || e.x1 + 40 >= width }
+      @enemy_direction *= -1
+      @enemys.each { |e| e.move_down }
+    end
+
+    if @enemies == 0
+      @level +=1
+    end
+
 
     @bullets.each(&:update)
     implode
