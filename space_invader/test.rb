@@ -1,108 +1,12 @@
 require 'gosu'
+require_relative 'player'
+require_relative 'enemy'
+require_relative 'bullet'
+require_relative 'enemy_bullet'
 
-WINDOW_WIDTH = 1600
-WINDOW_HEIGHT = 1000
-
-class Enemy
-  attr_reader :x, :y, :radius
-
-  def initialize(game, x, y, speed = 0.4)
-    @game = game
-    @image = Gosu::Image.new("media/img/creep.png")
-    @death_sound = Gosu::Sample.new("media/sound/pling.mp3")
-    @lives = 1
-    @radius = 40
-    @x = x
-    @y = y
-    @speed = speed
-  end
-
-  def spawn(x, y)
-    @x = x
-    @y = y
-  end
-
-  def move_down
-    @y += 40
-  end
-
-  def update(direction)
-    # använder game.speed för att kunna påverka alla enemies från Game
-    @x += @game.speed * direction
-  end
-
-  def draw
-    @image.draw(@x, @y, 0, 0.4, 0.4)
-  end
-end
-
-class Bullet
-  attr_reader :x, :y, :radius
-
-  def initialize(x, y)
-    @x = x
-    @y = y
-    @radius = 5
-    @speed = 8
-  end
-
-  def update
-    @y -= @speed
-  end
-
-  def draw
-    Gosu.draw_rect(@x - @radius, @y - @radius, @radius * 2, @radius * 2, Gosu::Color::WHITE, 1)
-  end
-
-  def off_screen?
-    @y < 0
-  end
-end
-
-class Player
-  attr_accessor :score 
-  attr_reader :x, :y, :level
-
-  def initialize(x, y, score = 0)
-    @image = Gosu::Image.new("media/img/anka.png")
-    @death_sound = Gosu::Sample.new("media/sound/pling.mp3")
-    @x = x
-    @y = y
-    @level = 1
-    @score = score
-    @lives = 3
-    @speed = 12
-  end
-
-  def warp(x, y)
-    @x = x
-    @y = y
-  end
-
-  def turn_left
-    @x -= @speed
-  end
-
-  def turn_right
-    @x += @speed
-  end
-
-  def update
-    max_x = 1600 - 125
-    @x = max_x if @x + 115 >= 1600
-    @x = 0 if @x <= 0
-
-    #if @y == enemy.y1 #då ska spelet sluta och texten you lose och vissa score
-      
-  end
-
-  def draw
-    @image.draw(@x, @y, 0, 0.6, 0.6)
-  end
-end
 
 class Game < Gosu::Window
-  attr_accessor :level, :speed
+  attr_accessor :level, :speed  
 
   def initialize
     super 1600, 1000
@@ -111,10 +15,18 @@ class Game < Gosu::Window
     @player = Player.new(750, 750)
     @player.warp(750, 750)
 
-    
+    @death_sound = Gosu::Sample.new("media/sound/pling.mp3")
+    @death_sound2 = Gosu::Sample.new("media/sound/coin.mp3")
+
+    self.caption = "Text i Gosu"
+    @font = Gosu::Font.new(32) # Skapa ett typsnitt med storlek 32
+    @fonten = Gosu::Font.new(300)
 
     @level = 1
-    @speed = 0.4
+    @lives = 5
+
+    @speed = 0.2
+
 
     @bullets = []
     @enemies = []
@@ -122,6 +34,8 @@ class Game < Gosu::Window
 
     @enemy_direction = 1
     @last_click_time = Time.now - 1.0
+    @last_spawn_time = Time.now - 1.0
+    @antal = @enemies.length
 
     spawn_enemies
   end
@@ -144,8 +58,14 @@ class Game < Gosu::Window
     end
   end
 
-  def update_speed(level)
-    @speed = level*0.6 * 1.15**level
+  def enemy_implode
+    @enemy_bullets.reject! do |bullet|
+      hit = bullet.x.between?(@player.x, @player.x + 100) && bullet.y.between?(@player.y, @player.y + 40)
+      if hit
+        @lives -= 1
+      end
+      hit
+    end
   end
 
   def implode
@@ -156,8 +76,10 @@ class Game < Gosu::Window
               bullet.y.between?(enemy.y, enemy.y + 40)
         if hit
           hit_any = true
-          @player.score+=1
-
+          @player.score+=@level*2
+          @speed += 0.025
+          @death_sound.play
+          @death_sound2.play
         end
         hit
       end
@@ -165,45 +87,91 @@ class Game < Gosu::Window
     end
   end
 
-  def update
-    
-    @player.turn_left if Gosu.button_down?(Gosu::KB_LEFT) || Gosu.button_down?(Gosu::GP_LEFT)
-    @player.turn_right if Gosu.button_down?(Gosu::KB_RIGHT) || Gosu.button_down?(Gosu::GP_RIGHT)
+  def respawn
+    if @enemies.empty?
+      @player.warp(750, 750)
+      if @last_death_time.nil?
+        @last_death_time = Time.now
+      elsif Time.now - @last_death_time >= 3
+        @level += 1
+        spawn_enemies
+        @speed += 0.15
+        @last_death_time = nil
+      end
+    end
+  end
 
+  def enemy_direction
+    if @enemies.any? { |e| e.x <= 0 || e.x + 80 >= width }
+      @enemy_direction *= -1
+      @enemies.each(&:move_down)
+    end
+  end
   
-    if Gosu.button_down?(Gosu::KB_UP) || Gosu.button_down?(Gosu::GP_BUTTON_0)
+  def enemy_shoot
+    @enemies.each do |enemy|
+      enemy.update(@enemy_direction)
+
+      # Låt fiender slumpmässigt skjuta
+      if rand(1..3000) == 1
+        @enemy_bullets << Enemy_bullet.new(enemy.x + 40, enemy.y + 40)
+      end
+    end
+  end
+
+  def enemy_update
+    @enemy_bullets.each(&:update)
+  end
+
+  def bullets_update
+    @bullets.each(&:update)
+  end
+
+  def delete_off_screan
+    @bullets.reject! { |b| b.off_screen? }
+    @enemy_bullets.reject! { |b| b.off_screen? }
+  end
+
+  def player_shoot_button
+    if Gosu.button_down?(Gosu::KB_UP) || Gosu.button_down?(Gosu::KB_SPACE) || Gosu.button_down?(Gosu::KB_W)
       cooldown = 0.1 # bullet coldown in sekonds
       if Time.now - @last_click_time >= cooldown
         @bullets << Bullet.new(@player.x + 50, @player.y)
         @last_click_time = Time.now
       end
     end
+  end
+
+  def update
+    
+    @player.turn_left if Gosu.button_down?(Gosu::KB_LEFT) || Gosu.button_down?(Gosu::KB_A)
+    @player.turn_right if Gosu.button_down?(Gosu::KB_RIGHT) || Gosu.button_down?(Gosu::KB_D)
+
+    
 
     @player.update
 
-    @enemies.each { |enemy| enemy.update(@enemy_direction) }
 
-    if @enemies.any? { |e| e.x <= 0 || e.x + 40 >= width }
-      @enemy_direction *= -1
-      @enemies.each(&:move_down)
-    end
-
-    if @enemies.empty?
-      @level += 1
-      update_speed(@level)
-      spawn_enemies
-      puts "spawn enemies, level #{@level}, score #{@player.score}"
-    end
-
-    @bullets.each(&:update)
+    #kallarpå funktioner
+    enemy_direction
+    enemy_shoot
+    respawn
+    enemy_update
+    bullets_update
     implode
-    @bullets.reject! { |b| b.off_screen? }
+    enemy_implode
+    player_shoot_button
   end
 
   def draw
     @player.draw
     @enemies.each(&:draw)
     @bullets.each(&:draw)
+    @enemy_bullets.each(&:draw)
+    @font.draw_text("Score #{@player.score}", 100, 30, 1, 1.0, 1.0, Gosu::Color::WHITE)
+    @font.draw_text("Level #{@level}", 700, 30, 1, 1.0, 1.0, Gosu::Color::WHITE)
+    @font.draw_text("Lives #{@lives}", 1300, 30, 1, 1.0, 1.0, Gosu::Color::WHITE)
+
   end
 end
 
